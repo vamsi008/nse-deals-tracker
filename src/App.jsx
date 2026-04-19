@@ -237,6 +237,34 @@ export default function App() {
 
   const bulkDeals  = useMemo(() => deals.filter(d => d.type === "bulk"),  [deals]);
   const blockDeals = useMemo(() => deals.filter(d => d.type === "block"), [deals]);
+  const baseDeals =
+    activeTab === "bulk"  ? bulkDeals :
+    activeTab === "block" ? blockDeals :
+    deals;
+
+  const filteredDeals = useMemo(() => {
+    let list = baseDeals;
+    if (filter !== "ALL") list = list.filter(d => d.buy_sell === filter);
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      list = list.filter(d =>
+        (d.symbol || "").toLowerCase().includes(q) ||
+        (d.client || "").toLowerCase().includes(q)
+      );
+    }
+    Object.entries(colFilters).forEach(([k, v]) => {
+      const q = v.trim().toLowerCase();
+      if (!q) return;
+      list = list.filter(d => {
+        if (k === 'value') return String(formatCr(d.value_cr)).toLowerCase().includes(q);
+        if (k === 'price') return String(formatPrice(d.price)).toLowerCase().includes(q);
+        if (k === 'quantity') return String(formatNum(d.quantity)).toLowerCase().includes(q);
+        return String(d[k] || "").toLowerCase().includes(q);
+      });
+    });
+    return list;
+  }, [baseDeals, filter, search, colFilters]);
+
   const targetDealsForAlerts = useMemo(() => {
     if (leaderboardType === "all") return rawDeals;
     return rawDeals.filter(d => d.type === leaderboardType);
@@ -247,11 +275,11 @@ export default function App() {
     [allAlerts, windowCutoff]);
 
   const totalBuyValue = useMemo(() =>
-    deals.filter(d => d.buy_sell === "BUY").reduce((s, d) => s + (d.value_cr || 0), 0),
-    [deals]);
+    filteredDeals.filter(d => d.buy_sell === "BUY").reduce((s, d) => s + (d.value_cr || 0), 0),
+    [filteredDeals]);
   const totalSellValue = useMemo(() =>
-    deals.filter(d => d.buy_sell === "SELL").reduce((s, d) => s + (d.value_cr || 0), 0),
-    [deals]);
+    filteredDeals.filter(d => d.buy_sell === "SELL").reduce((s, d) => s + (d.value_cr || 0), 0),
+    [filteredDeals]);
 
   // ── Client Leaderboard from reversal alerts ───────────────────────────────
   const clientLeaderboard = useMemo(() => {
@@ -300,37 +328,6 @@ export default function App() {
     if (leaderboardFilters.symbol) list = list.filter(c => c.sortedSymbols.some(s => s.symbol.toLowerCase().includes(leaderboardFilters.symbol.toLowerCase())));
     return list;
   }, [clientLeaderboard, leaderboardFilters]);
-
-
-
-  const baseDeals =
-    activeTab === "bulk"  ? bulkDeals :
-    activeTab === "block" ? blockDeals :
-    deals;
-
-  const filteredDeals = useMemo(() => {
-    let list = baseDeals;
-    if (filter !== "ALL") list = list.filter(d => d.buy_sell === filter);
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      list = list.filter(d =>
-        (d.symbol || "").toLowerCase().includes(q) ||
-        (d.client || "").toLowerCase().includes(q)
-      );
-    }
-    Object.entries(colFilters).forEach(([k, v]) => {
-      const q = v.trim().toLowerCase();
-      if (!q) return;
-      list = list.filter(d => {
-        if (k === 'value') return String(formatCr(d.value_cr)).toLowerCase().includes(q);
-        if (k === 'price') return String(formatPrice(d.price)).toLowerCase().includes(q);
-        if (k === 'quantity') return String(formatNum(d.quantity)).toLowerCase().includes(q);
-        return String(d[k] || "").toLowerCase().includes(q);
-      });
-    });
-    return list;
-  }, [baseDeals, filter, search, colFilters]);
-
   // ── Unique dates in view ──────────────────────────────────────────────
   const latestDbDate = useMemo(() => {
     if (!rawDeals || rawDeals.length === 0) return null;
