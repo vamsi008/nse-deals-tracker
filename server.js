@@ -40,9 +40,13 @@ function computeAlerts(deals) {
   const alerts = [];
   const buys = {};
 
-  const sorted = [...deals].sort(
-    (a, b) => parseDate(a.date) - parseDate(b.date)
-  );
+  const sorted = [...deals].sort((a, b) => {
+    const diff = parseDate(a.date) - parseDate(b.date);
+    if (diff !== 0) return diff;
+    if (a.buy_sell === "BUY" && b.buy_sell === "SELL") return -1;
+    if (a.buy_sell === "SELL" && b.buy_sell === "BUY") return 1;
+    return 0;
+  });
 
   for (const deal of sorted) {
     const key = `${deal.client}||${deal.symbol}`;
@@ -299,7 +303,159 @@ app.post("/api/upload-csv", (req, res) => {
   }
 });
 
+/** GET /api/clients — return all unique clients with summary stats */
+app.get("/api/clients", (req, res) => {
+  const allDeals = loadDeals();
+  const q = (req.query.q || "").trim().toLowerCase();
+
+  // Build per-client stats
+  const clientMap = {};
+  const clientTxns = {};
+  for (const deal of allDeals) {
+    const name = deal.client;
+    if (!name) continue;
+    if (!clientMap[name]) {
+      clientMap[name] = { client: name, totalTxns: 0, totalBuyCr: 0, totalSellCr: 0, symbols: new Set() };
+      clientTxns[name] = [];
+    }
+    clientMap[name].totalTxns += 1;
+    clientMap[name].symbols.add(deal.symbol);
+    if (deal.buy_sell === "BUY") clientMap[name].totalBuyCr += (deal.value_cr || 0);
+    if (deal.buy_sell === "SELL") clientMap[name].totalSellCr += (deal.value_cr || 0);
+    clientTxns[name].push(deal);
+  }
+
+  // Compute open positions count per client (FIFO)
+  for (const [name, stats] of Object.entries(clientMap)) {
+    const txns = clientTxns[name].sort((a, b) => {
+      const diff = parseDate(a.date) - parseDate(b.date);
+      if (diff !== 0) return diff;
+      if (a.buy_sell === "BUY" && b.buy_sell === "SELL") return -1;
+      if (a.buy_sell === "SELL" && b.buy_sell === "BUY") return 1;
+      return 0;
+    });
+    const queues = {};
+    let openCount = 0;
+    for (const deal of txns) {
+      const sym = deal.symbol;
+      if (!queues[sym]) queues[sym] = [];
+      if (deal.buy_sell === "BUY") {
+        queues[sym].push({ remaining: deal.quantity });
+      } else if (deal.buy_sell === "SELL") {
+        let rem = deal.quantity;
+        while (rem > 0 && queues[sym].length > 0) {
+          const oldest = queues[sym][0];
+          const matched = Math.min(rem, oldest.remaining);
+          oldest.remaining -= matched;
+          rem -= matched;
+          if (oldest.remaining <= 0) queues[sym].shift();
+        }
+      }
+    }
+    for (const lots of Object.values(queues)) {
+      openCount += lots.filter(l => l.remaining > 0).length;
+    }
+    stats.openPositionsCount = openCount;
+    stats.uniqueSymbols = stats.symbols.size;
+    delete stats.symbols;
+  }
+
+  let clients = Object.values(clientMap).sort((a, b) => b.totalBuyCr - a.totalBuyCr);
+  if (q) clients = clients.filter(c => c.client.toLowerCase().includes(q));
+
+  res.json(clients.slice(0, 500));
+});
+
+/** GET /api/client-search?q=<query> — return matching client names */
+app.get("/api/client-search", (req, res) => {
+  const q = (req.query.q || "").trim().toLowerCase();
+  if (!q || q.length < 2) return res.json([]);
+  const allDeals = loadDeals();
+  const names = [...new Set(allDeals.map(d => d.client).filter(Boolean))];
+  const matches = names.filter(n => n.toLowerCase().includes(q)).slice(0, 15);
+  res.json(matches);
+});
+
+/** GET /api/client-portfolio?client=<name> — full transaction history + open positions */
+app.get("/api/client-portfolio", (req, res) => {
+  const clientName = (req.query.client || "").trim();
+  if (!clientName) return res.json({ error: "client param required" });
+
+  const allDeals = loadDeals();
+  // All transactions for this client, chronological
+  const transactions = allDeals
+    .filter(d => (d.client || "").toLowerCase() === clientName.toLowerCase())
+    .sort((a, b) => {
+      const diff = parseDate(a.date) - parseDate(b.date);
+      if (diff !== 0) return diff;
+      if (a.buy_sell === "BUY" && b.buy_sell === "SELL") return -1;
+      if (a.buy_sell === "SELL" && b.buy_sell === "BUY") return 1;
+      return 0;
+    });
+
+  if (transactions.length === 0) return res.json({ client: clientName, transactions: [], openPositions: [], summary: {} });
+
+  // ── Compute open positions via FIFO queue per symbol ──────────────────
+  const queues = {}; // symbol → [{date, qty, price, type}]
+  const openPositions = [];
+
+  for (const deal of transactions) {
+    const sym = deal.symbol;
+    if (!queues[sym]) queues[sym] = [];
+
+    if (deal.buy_sell === "BUY") {
+      queues[sym].push({ date: deal.date, qty: deal.quantity, price: deal.price, type: deal.type, remaining: deal.quantity });
+    } else if (deal.buy_sell === "SELL") {
+      let remainSell = deal.quantity;
+      while (remainSell > 0 && queues[sym].length > 0) {
+        const oldest = queues[sym][0];
+        const matched = Math.min(remainSell, oldest.remaining);
+        oldest.remaining -= matched;
+        remainSell -= matched;
+        if (oldest.remaining <= 0) queues[sym].shift();
+      }
+    }
+  }
+
+  // Anything left in queues = still held (open position)
+  for (const [symbol, lots] of Object.entries(queues)) {
+    for (const lot of lots) {
+      if (lot.remaining > 0) {
+        openPositions.push({
+          symbol,
+          buyDate: lot.date,
+          buyPrice: lot.price,
+          openQty: lot.remaining,
+          type: lot.type,
+          valueAtCost: (lot.remaining * lot.price) / 10000000,
+        });
+      }
+    }
+  }
+  openPositions.sort((a, b) => parseDate(b.buyDate) - parseDate(a.buyDate));
+
+  // ── Summary ──
+  const totalBuyCr  = transactions.filter(d => d.buy_sell === "BUY").reduce((s, d) => s + (d.value_cr || 0), 0);
+  const totalSellCr = transactions.filter(d => d.buy_sell === "SELL").reduce((s, d) => s + (d.value_cr || 0), 0);
+  const uniqueSymbols = [...new Set(transactions.map(d => d.symbol))];
+
+  res.json({
+    client: clientName,
+    transactions: transactions.reverse(), // most recent first for display
+    openPositions,
+    summary: {
+      totalTxns: transactions.length,
+      totalBuyCr,
+      totalSellCr,
+      openPositionsCount: openPositions.length,
+      uniqueSymbols: uniqueSymbols.length,
+      openValueCr: openPositions.reduce((s, p) => s + p.valueAtCost, 0),
+    }
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`\n🚀 NSE backend running on http://localhost:${PORT}`);
   console.log(`   GET  /api/dashboard → Supercharged API-driven analytics`);
+  console.log(`   GET  /api/client-portfolio → Client portfolio & open positions`);
 });

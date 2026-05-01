@@ -34,6 +34,20 @@ export default function App() {
   const [leaderboardSortDesc, setLeaderboardSortDesc] = useState(true);
   const [expandedTop10Client, setExpandedTop10Client] = useState(null);
 
+  // ── Client Portfolio State ──
+  const [portfolioClient, setPortfolioClient] = useState("");
+  const [portfolioSearch, setPortfolioSearch] = useState("");
+  const [portfolioSuggestions, setPortfolioSuggestions] = useState([]);
+  const [portfolioData, setPortfolioData] = useState(null);
+  const [portfolioLoading, setPortfolioLoading] = useState(false);
+  const [portfolioError, setPortfolioError] = useState(null);
+  const [openPositionsOnly, setOpenPositionsOnly] = useState(false);
+
+  // ── Clients List (for portfolio panel) ──
+  const [clientsList, setClientsList] = useState([]);
+  const [clientsListSearch, setClientsListSearch] = useState("");
+  const [clientsListLoading, setClientsListLoading] = useState(false);
+
   // Reset page when filters change
   useEffect(() => { setPage(1); }, [activeTab, filter, search, dayWindow]);
 
@@ -71,6 +85,53 @@ export default function App() {
     }, search ? 400 : 0); // debounce search
     return () => clearTimeout(delayDebounceFn);
   }, [loadDashboard, search]);
+
+  // ── Portfolio: autocomplete ──
+  useEffect(() => {
+    if (portfolioSearch.length < 2) { setPortfolioSuggestions([]); return; }
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/client-search?q=${encodeURIComponent(portfolioSearch)}`);
+        setPortfolioSuggestions(await r.json());
+      } catch { setPortfolioSuggestions([]); }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [portfolioSearch]);
+
+  // ── Load clients list when portfolio tab is activated ──
+  useEffect(() => {
+    if (activeTab !== "portfolio") return;
+    setClientsListLoading(true);
+    fetch("/api/clients")
+      .then(r => r.json())
+      .then(d => { setClientsList(d); setClientsListLoading(false); })
+      .catch(() => setClientsListLoading(false));
+  }, [activeTab]);
+
+  const loadPortfolio = useCallback(async (clientName) => {
+    if (!clientName) return;
+    setPortfolioLoading(true);
+    setPortfolioError(null);
+    setPortfolioData(null);
+    try {
+      const r = await fetch(`/api/client-portfolio?client=${encodeURIComponent(clientName)}`);
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      setPortfolioData(d);
+    } catch (e) {
+      setPortfolioError(e.message);
+    } finally {
+      setPortfolioLoading(false);
+    }
+  }, []);
+
+  const selectPortfolioClient = useCallback((name) => {
+    setPortfolioClient(name);
+    setPortfolioSearch(name);
+    setPortfolioSuggestions([]);
+    setOpenPositionsOnly(false); // reset filter on client change
+    loadPortfolio(name);
+  }, [loadPortfolio]);
 
   // ── Refresh / Poll Logic ──
   const pollUntilDone = useCallback(async () => {
@@ -273,6 +334,7 @@ export default function App() {
               { key: "leaderboard", label: `Leaderboard` },
               { key: "top10", label: `Top 10 (${dayWindow}D)` },
               { key: "alerts", label: `Alerts (${data.summary.alertsCount})` },
+              { key: "portfolio", label: `📋 Client Portfolio` },
             ].map(t => (
               <button
                 key={t.key}
@@ -285,7 +347,7 @@ export default function App() {
           </div>
 
           {/* ── Content ────────────────────────────────────────────────────── */}
-          <div style={{opacity: loading ? 0.5 : 1, transition: 'opacity 0.2s'}}>
+          <div style={{opacity: (loading && activeTab !== 'portfolio') ? 0.5 : 1, transition: 'opacity 0.2s'}}>
             {/* Alerts Tab */}
             {activeTab === "alerts" && (
               <div className="alerts-section fade-in">
@@ -426,7 +488,7 @@ export default function App() {
             )}
 
             {/* Main Table */}
-            {activeTab !== "leaderboard" && activeTab !== "top10" && activeTab !== "alerts" && (
+            {activeTab !== "leaderboard" && activeTab !== "top10" && activeTab !== "alerts" && activeTab !== "portfolio" && (
               <div className="data-table-container fade-in">
               {data.table.data.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
@@ -517,6 +579,229 @@ export default function App() {
                 )}
                 </>
               )}
+              </div>
+            )}
+
+            {/* ── Client Portfolio Tab ──────────────────────────────────── */}
+            {activeTab === "portfolio" && (
+              <div className="portfolio-section fade-in">
+                <div className="portfolio-two-panel">
+
+                  {/* ── LEFT PANEL: Client List ── */}
+                  <div className="portfolio-list-panel">
+                    <div className="portfolio-list-header">
+                      <h3>👥 All Clients</h3>
+                      <span className="badge-count" style={{ background: 'rgba(59,130,246,0.15)', color: '#60a5fa', borderColor: 'rgba(59,130,246,0.3)' }}>
+                        {clientsList.length}
+                      </span>
+                    </div>
+                    <div className="portfolio-list-search-wrap">
+                      <input
+                        className="portfolio-list-search"
+                        type="text"
+                        placeholder="Filter clients…"
+                        value={clientsListSearch}
+                        onChange={e => setClientsListSearch(e.target.value)}
+                      />
+                    </div>
+                    {clientsListLoading && (
+                      <div style={{ padding: '2rem', textAlign: 'center' }}><div className="spinner"></div></div>
+                    )}
+                    <div className="portfolio-client-list">
+                      {clientsList
+                        .filter(c => !clientsListSearch || c.client.toLowerCase().includes(clientsListSearch.toLowerCase()))
+                        .map(c => (
+                          <div
+                            key={c.client}
+                            className={`portfolio-client-row ${portfolioClient === c.client ? 'active' : ''}`}
+                            onClick={() => selectPortfolioClient(c.client)}
+                          >
+                            <div className="pcr-name">{c.client}</div>
+                            <div className="pcr-meta">
+                              <span className="pcr-txns">{c.totalTxns} trades</span>
+                              {c.openPositionsCount > 0 && (
+                                <span className="pcr-open-badge">
+                                  🟢 {c.openPositionsCount} open
+                                </span>
+                              )}
+                            </div>
+                            <div className="pcr-value">{formatCr(c.totalBuyCr)}</div>
+                          </div>
+                        ))
+                      }
+                    </div>
+                  </div>
+
+                  {/* ── RIGHT PANEL: Client Detail ── */}
+                  <div className="portfolio-detail-panel">
+                    {portfolioLoading && (
+                      <div className="loading-container"><div className="spinner"></div><p>Loading portfolio…</p></div>
+                    )}
+                    {portfolioError && (
+                      <div className="alert-item" style={{ background: 'rgba(239,68,68,0.1)', borderColor: 'rgba(239,68,68,0.3)' }}>
+                        <p style={{ color: '#f87171' }}>⚠️ {portfolioError}</p>
+                      </div>
+                    )}
+
+                    {portfolioData && !portfolioLoading && (
+                      <>
+                        {/* Client Header */}
+                        <div className="portfolio-client-header">
+                          <div className="portfolio-client-name">📋 {portfolioData.client}</div>
+                          <div className="portfolio-summary-cards">
+                            <div className="portfolio-mini-card">
+                              <div className="pmc-label">Total Trades</div>
+                              <div className="pmc-value">{portfolioData.summary.totalTxns}</div>
+                            </div>
+                            <div className="portfolio-mini-card">
+                              <div className="pmc-label">Symbols</div>
+                              <div className="pmc-value">{portfolioData.summary.uniqueSymbols}</div>
+                            </div>
+                            <div className="portfolio-mini-card buy">
+                              <div className="pmc-label">Total Bought</div>
+                              <div className="pmc-value">{formatCr(portfolioData.summary.totalBuyCr)}</div>
+                            </div>
+                            <div className="portfolio-mini-card sell">
+                              <div className="pmc-label">Total Sold</div>
+                              <div className="pmc-value">{formatCr(portfolioData.summary.totalSellCr)}</div>
+                            </div>
+                            <div className="portfolio-mini-card open">
+                              <div className="pmc-label">Open Positions</div>
+                              <div className="pmc-value">{portfolioData.summary.openPositionsCount}</div>
+                            </div>
+                            <div className="portfolio-mini-card open">
+                              <div className="pmc-label">Open Value</div>
+                              <div className="pmc-value">{formatCr(portfolioData.summary.openValueCr)}</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* ── Transaction History ── */}
+                        <div className="leaderboard-section">
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                            <h2 className="section-title" style={{ margin: 0 }}>
+                              📜 {openPositionsOnly ? 'Open (Unsold) Positions' : 'All Transactions'}
+                              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 400 }}>
+                                &nbsp;({openPositionsOnly
+                                  ? portfolioData.openPositions.length
+                                  : portfolioData.transactions.length} records)
+                              </span>
+                            </h2>
+                            <button
+                              onClick={() => setOpenPositionsOnly(v => !v)}
+                              style={{
+                                padding: '0.45rem 1rem',
+                                borderRadius: '8px',
+                                border: openPositionsOnly ? '1px solid rgba(16,185,129,0.5)' : '1px solid var(--border-color)',
+                                background: openPositionsOnly ? 'rgba(16,185,129,0.15)' : 'transparent',
+                                color: openPositionsOnly ? '#10b981' : 'var(--text-secondary)',
+                                cursor: 'pointer',
+                                fontSize: '0.82rem',
+                                fontWeight: 600,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.4rem',
+                                transition: 'all 0.2s'
+                              }}
+                            >
+                              <span style={{ fontSize: '0.9rem' }}>{openPositionsOnly ? '🟢' : '○'}</span>
+                              Open Positions Only
+                            </button>
+                          </div>
+
+                          {openPositionsOnly ? (
+                            /* ── Open Positions View (table style like leaderboard) ── */
+                            portfolioData.openPositions.length === 0 ? (
+                              <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>No open positions found.</div>
+                            ) : (
+                              <div className="leaderboard-table-wrap">
+                                <table className="leaderboard-table">
+                                  <thead>
+                                    <tr>
+                                      <th>Symbol</th>
+                                      <th>Type</th>
+                                      <th>Bought On</th>
+                                      <th style={{ textAlign: 'right' }}>Open Qty</th>
+                                      <th style={{ textAlign: 'right' }}>Avg Buy Price</th>
+                                      <th style={{ textAlign: 'right' }}>Cost Value</th>
+                                      <th>Status</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {portfolioData.openPositions.map((pos, i) => (
+                                      <tr key={i} style={{ borderLeft: '3px solid #10b981', background: 'rgba(16,185,129,0.04)' }}>
+                                        <td style={{ fontWeight: 700, color: '#f8fafc' }}>{pos.symbol}</td>
+                                        <td>
+                                          <span className="badge symbol" style={{ background: pos.type === 'block' ? 'rgba(59,130,246,0.25)' : 'rgba(139,92,246,0.25)', color: pos.type === 'block' ? '#60a5fa' : '#c084fc', borderColor: pos.type === 'block' ? 'rgba(59,130,246,0.4)' : 'rgba(139,92,246,0.4)' }}>{pos.type?.toUpperCase()}</span>
+                                        </td>
+                                        <td className="col-date">{pos.buyDate}</td>
+                                        <td style={{ textAlign: 'right', fontWeight: 700, color: '#10b981' }}>{formatNum(pos.openQty)}</td>
+                                        <td style={{ textAlign: 'right', color: '#10b981', fontWeight: 600 }}>{formatPrice(pos.buyPrice)}</td>
+                                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatCr(pos.valueAtCost)}</td>
+                                        <td><span className="open-tag">🟢 Holding</span></td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )
+                          ) : (
+                            /* ── All Transactions View ── */
+                            <div className="leaderboard-table-wrap">
+                              <table className="leaderboard-table">
+                                <thead>
+                                  <tr>
+                                    <th>Date</th>
+                                    <th>Type</th>
+                                    <th>Symbol</th>
+                                    <th>Action</th>
+                                    <th style={{ textAlign: 'right' }}>Quantity</th>
+                                    <th style={{ textAlign: 'right' }}>Price</th>
+                                    <th style={{ textAlign: 'right' }}>Value</th>
+                                    <th>Status</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {portfolioData.transactions.map((tx, i) => {
+                                    const isOpenBuy = tx.buy_sell === 'BUY' && portfolioData.openPositions.some(p => p.symbol === tx.symbol && p.buyDate === tx.date);
+                                    return (
+                                      <tr key={i} style={{ borderLeft: isOpenBuy ? '3px solid #10b981' : (tx.buy_sell === 'SELL' ? '3px solid var(--color-sell)' : '3px solid var(--color-buy)') }} className={tx.buy_sell === 'SELL' ? 'row-sell' : 'row-buy'}>
+                                        <td className="col-date">{tx.date}</td>
+                                        <td>
+                                          <span className="badge symbol" style={{ background: tx.type === 'block' ? 'rgba(59,130,246,0.25)' : (tx.type === 'short' ? 'rgba(236,72,153,0.25)' : 'rgba(139,92,246,0.25)'), color: tx.type === 'block' ? '#60a5fa' : (tx.type === 'short' ? '#f472b6' : '#c084fc') }}>{tx.type?.toUpperCase()}</span>
+                                        </td>
+                                        <td style={{ fontWeight: 700, color: '#f8fafc' }}>{tx.symbol}</td>
+                                        <td><span className={`badge ${tx.buy_sell === 'BUY' ? 'buy' : 'sell'}`}>{tx.buy_sell}</span></td>
+                                        <td style={{ textAlign: 'right', fontWeight: 500 }}>{formatNum(tx.quantity)}</td>
+                                        <td style={{ textAlign: 'right' }}>{formatPrice(tx.price)}</td>
+                                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatCr(tx.value_cr)}</td>
+                                        <td>
+                                          {isOpenBuy
+                                            ? <span className="open-tag">🟢 Open</span>
+                                            : <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>—</span>
+                                          }
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+
+                    {!portfolioData && !portfolioLoading && !portfolioError && (
+                      <div className="portfolio-empty-state">
+                        <div className="portfolio-empty-icon">👈</div>
+                        <p style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--text-primary)' }}>Select a client from the list</p>
+                        <p>Click any client on the left to view their transactions and open positions.</p>
+                      </div>
+                    )}
+                  </div>
+
+                </div>
               </div>
             )}
           </div>
