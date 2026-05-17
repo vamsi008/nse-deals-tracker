@@ -883,3 +883,44 @@ tr.row-open-position td {
   font-size: 3rem;
   opacity: 0.4;
 }
+/* ── Conviction Dashboard ────────────────────────────────────────────────────── */
+.conviction-container {
+  margin-bottom: 2rem;
+}
+
+.conviction-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.expanded-active-row {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.expanded-row-detail {
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.detail-table-wrap {
+  box-shadow: inset 0 0 20px rgba(0,0,0,0.2);
+}
+
+.open-tag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #10b981;
+  background: rgba(16,185,129,0.12);
+  border: 1px solid rgba(16,185,129,0.3);
+  padding: 0.15rem 0.5rem;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}

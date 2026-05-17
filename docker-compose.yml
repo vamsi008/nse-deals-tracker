@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: nse-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: nse_root_pass
+      MYSQL_DATABASE: nse_deals
+      MYSQL_USER: nse_user
+      MYSQL_PASSWORD: nse_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - nse_mysql_data:/var/lib/mysql
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --max_allowed_packet=256M
+
+volumes:
+  nse_mysql_data:
+    driver: local

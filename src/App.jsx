@@ -41,7 +41,9 @@ export default function App() {
   const [portfolioData, setPortfolioData] = useState(null);
   const [portfolioLoading, setPortfolioLoading] = useState(false);
   const [portfolioError, setPortfolioError] = useState(null);
-  const [openPositionsOnly, setOpenPositionsOnly] = useState(false);
+  const [portfolioSelectedSymbol, setPortfolioSelectedSymbol] = useState(null);
+  const [level1SortConfig, setLevel1SortConfig] = useState({ key: 'valueAtCost', direction: 'desc' });
+  const [level1Search, setLevel1Search] = useState("");
 
   // ── Clients List (for portfolio panel) ──
   const [clientsList, setClientsList] = useState([]);
@@ -129,7 +131,8 @@ export default function App() {
     setPortfolioClient(name);
     setPortfolioSearch(name);
     setPortfolioSuggestions([]);
-    setOpenPositionsOnly(false); // reset filter on client change
+    setPortfolioSelectedSymbol(null); // reset filter on client change
+    setLevel1Search("");
     loadPortfolio(name);
   }, [loadPortfolio]);
 
@@ -645,150 +648,179 @@ export default function App() {
 
                     {portfolioData && !portfolioLoading && (
                       <>
-                        {/* Client Header */}
-                        <div className="portfolio-client-header">
-                          <div className="portfolio-client-name">📋 {portfolioData.client}</div>
-                          <div className="portfolio-summary-cards">
-                            <div className="portfolio-mini-card">
-                              <div className="pmc-label">Total Trades</div>
-                              <div className="pmc-value">{portfolioData.summary.totalTxns}</div>
-                            </div>
-                            <div className="portfolio-mini-card">
-                              <div className="pmc-label">Symbols</div>
-                              <div className="pmc-value">{portfolioData.summary.uniqueSymbols}</div>
-                            </div>
-                            <div className="portfolio-mini-card buy">
-                              <div className="pmc-label">Total Bought</div>
-                              <div className="pmc-value">{formatCr(portfolioData.summary.totalBuyCr)}</div>
-                            </div>
-                            <div className="portfolio-mini-card sell">
-                              <div className="pmc-label">Total Sold</div>
-                              <div className="pmc-value">{formatCr(portfolioData.summary.totalSellCr)}</div>
-                            </div>
-                            <div className="portfolio-mini-card open">
-                              <div className="pmc-label">Open Positions</div>
-                              <div className="pmc-value">{portfolioData.summary.openPositionsCount}</div>
-                            </div>
-                            <div className="portfolio-mini-card open">
-                              <div className="pmc-label">Open Value</div>
-                              <div className="pmc-value">{formatCr(portfolioData.summary.openValueCr)}</div>
-                            </div>
-                          </div>
+                        {/* Client name bar */}
+                        <div style={{ padding: '1rem 1.5rem', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 700, fontSize: '1rem', color: '#f8fafc' }}>
+                            📋 {portfolioData.client}
+                          </span>
+                          {portfolioSelectedSymbol === null && (
+                            <button
+                              onClick={() => setPortfolioSelectedSymbol('__all__')}
+                              style={{ padding: '0.35rem 0.85rem', borderRadius: '7px', border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
+                            >
+                              All Transactions →
+                            </button>
+                          )}
+                          {portfolioSelectedSymbol !== null && (
+                            <button
+                              onClick={() => setPortfolioSelectedSymbol(null)}
+                              style={{ padding: '0.35rem 0.85rem', borderRadius: '7px', border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
+                            >
+                              ← Open Positions
+                            </button>
+                          )}
                         </div>
 
-                        {/* ── Transaction History ── */}
-                        <div className="leaderboard-section">
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-                            <h2 className="section-title" style={{ margin: 0 }}>
-                              📜 {openPositionsOnly ? 'Open (Unsold) Positions' : 'All Transactions'}
-                              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 400 }}>
-                                &nbsp;({openPositionsOnly
-                                  ? portfolioData.openPositions.length
-                                  : portfolioData.transactions.length} records)
-                              </span>
-                            </h2>
-                            <button
-                              onClick={() => setOpenPositionsOnly(v => !v)}
-                              style={{
-                                padding: '0.45rem 1rem',
-                                borderRadius: '8px',
-                                border: openPositionsOnly ? '1px solid rgba(16,185,129,0.5)' : '1px solid var(--border-color)',
-                                background: openPositionsOnly ? 'rgba(16,185,129,0.15)' : 'transparent',
-                                color: openPositionsOnly ? '#10b981' : 'var(--text-secondary)',
-                                cursor: 'pointer',
-                                fontSize: '0.82rem',
-                                fontWeight: 600,
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.4rem',
-                                transition: 'all 0.2s'
-                              }}
-                            >
-                              <span style={{ fontSize: '0.9rem' }}>{openPositionsOnly ? '🟢' : '○'}</span>
-                              Open Positions Only
-                            </button>
-                          </div>
+                        {/* LEVEL 1: Simple open positions list */}
+                        {portfolioSelectedSymbol === null && (
+                          <div style={{ padding: '0.75rem 0' }}>
+                            {(() => {
+                              const rawPositions = portfolioData.openPositionsBySymbol?.filter(pos => pos.totalOpenQty >= 1) ?? [];
+                              const filteredPositions = rawPositions.filter(p => p.symbol.toLowerCase().includes(level1Search.toLowerCase()));
+                              const sortedPositions = [...filteredPositions].sort((a, b) => {
+                                let aVal = a[level1SortConfig.key];
+                                let bVal = b[level1SortConfig.key];
+                                if (level1SortConfig.key === 'symbol') {
+                                  return level1SortConfig.direction === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+                                }
+                                return level1SortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
+                              });
 
-                          {openPositionsOnly ? (
-                            /* ── Open Positions View (table style like leaderboard) ── */
-                            portfolioData.openPositions.length === 0 ? (
-                              <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>No open positions found.</div>
-                            ) : (
-                              <div className="leaderboard-table-wrap">
+                              const handleSort = (key) => {
+                                setLevel1SortConfig(prev => ({
+                                  key,
+                                  direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc'
+                                }));
+                              };
+
+                              return (
+                                <>
+                                  <div style={{ padding: '0.5rem 1.5rem', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <input 
+                                      type="text" 
+                                      placeholder="Filter scripts..." 
+                                      value={level1Search} 
+                                      onChange={(e) => setLevel1Search(e.target.value)}
+                                      style={{ padding: '0.45rem 0.85rem', borderRadius: '7px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: '#f8fafc', fontSize: '0.85rem', outline: 'none', minWidth: '200px' }}
+                                    />
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                                      {sortedPositions.length} scripts
+                                    </span>
+                                  </div>
+
+                                  {sortedPositions.length === 0 ? (
+                                    <div style={{ textAlign: 'center', padding: '4rem 2rem', color: 'var(--text-secondary)' }}>
+                                      {rawPositions.length === 0 ? (
+                                        <>
+                                          <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📭</div>
+                                          <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>No open positions</p>
+                                          <p style={{ fontSize: '0.82rem', marginBottom: '1rem' }}>All shares have been fully sold.</p>
+                                        </>
+                                      ) : (
+                                        <p style={{ fontWeight: 600 }}>No scripts match your filter.</p>
+                                      )}
+                                      {rawPositions.length === 0 && (
+                                        <button
+                                          onClick={() => setPortfolioSelectedSymbol('__all__')}
+                                          style={{ padding: '0.4rem 1rem', borderRadius: '7px', border: '1px solid var(--border-color)', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.82rem' }}
+                                        >
+                                          View all transactions
+                                        </button>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="leaderboard-table-wrap" style={{ margin: '0 0.75rem' }}>
+                                      <table className="leaderboard-table">
+                                        <thead>
+                                          <tr>
+                                            <th onClick={() => handleSort('symbol')} style={{ cursor: 'pointer' }}>Script {level1SortConfig.key === 'symbol' ? (level1SortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                                            <th onClick={() => handleSort('totalOpenQty')} style={{ textAlign: 'right', cursor: 'pointer' }}>Shares Held {level1SortConfig.key === 'totalOpenQty' ? (level1SortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                                            <th onClick={() => handleSort('valueAtCost')} style={{ textAlign: 'right', cursor: 'pointer' }}>Amount (Cr) {level1SortConfig.key === 'valueAtCost' ? (level1SortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {sortedPositions.map(pos => (
+                                            <tr
+                                              key={pos.symbol}
+                                              onClick={() => setPortfolioSelectedSymbol(pos.symbol)}
+                                              style={{ cursor: 'pointer', borderLeft: '3px solid #10b981' }}
+                                              className="row-buy"
+                                            >
+                                              <td style={{ fontWeight: 700, color: '#f8fafc', fontSize: '0.95rem' }}>{pos.symbol}</td>
+                                              <td style={{ textAlign: 'right', fontWeight: 700, color: '#10b981', fontSize: '0.95rem' }}>
+                                                {formatNum(pos.totalOpenQty)}
+                                              </td>
+                                              <td style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.95rem' }}>
+                                                {formatCr(pos.valueAtCost)}
+                                              </td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        )}
+
+                        {/* LEVEL 2: All transactions for selected script */}
+                        {portfolioSelectedSymbol !== null && (() => {
+                          const isAllView = portfolioSelectedSymbol === '__all__';
+                          const filteredTxns = isAllView
+                            ? portfolioData.transactions
+                            : portfolioData.transactions.filter(t => t.symbol === portfolioSelectedSymbol);
+
+                          return (
+                            <div style={{ padding: '0.75rem 0' }}>
+                              <div style={{ padding: '0.5rem 1.5rem 0.75rem' }}>
+                                <span style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                                  {isAllView ? `All Transactions — ${filteredTxns.length} records` : `${portfolioSelectedSymbol} — ${filteredTxns.length} transactions`}
+                                </span>
+                              </div>
+
+                              <div className="leaderboard-table-wrap" style={{ margin: '0 0.75rem' }}>
                                 <table className="leaderboard-table">
                                   <thead>
                                     <tr>
-                                      <th>Symbol</th>
+                                      <th>Date</th>
                                       <th>Type</th>
-                                      <th>Bought On</th>
-                                      <th style={{ textAlign: 'right' }}>Open Qty</th>
-                                      <th style={{ textAlign: 'right' }}>Avg Buy Price</th>
-                                      <th style={{ textAlign: 'right' }}>Cost Value</th>
-                                      <th>Status</th>
+                                      {isAllView && <th>Script</th>}
+                                      <th>Action</th>
+                                      <th style={{ textAlign: 'right' }}>Quantity</th>
+                                      <th style={{ textAlign: 'right' }}>Price (₹)</th>
+                                      <th style={{ textAlign: 'right' }}>Value</th>
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {portfolioData.openPositions.map((pos, i) => (
-                                      <tr key={i} style={{ borderLeft: '3px solid #10b981', background: 'rgba(16,185,129,0.04)' }}>
-                                        <td style={{ fontWeight: 700, color: '#f8fafc' }}>{pos.symbol}</td>
+                                    {filteredTxns.map((tx, i) => (
+                                      <tr
+                                        key={i}
+                                        style={{ borderLeft: tx.buy_sell === 'SELL' ? '3px solid var(--color-sell)' : '3px solid var(--color-buy)' }}
+                                        className={tx.buy_sell === 'SELL' ? 'row-sell' : 'row-buy'}
+                                      >
+                                        <td className="col-date">{tx.date}</td>
                                         <td>
-                                          <span className="badge symbol" style={{ background: pos.type === 'block' ? 'rgba(59,130,246,0.25)' : 'rgba(139,92,246,0.25)', color: pos.type === 'block' ? '#60a5fa' : '#c084fc', borderColor: pos.type === 'block' ? 'rgba(59,130,246,0.4)' : 'rgba(139,92,246,0.4)' }}>{pos.type?.toUpperCase()}</span>
+                                          <span className="badge symbol" style={{
+                                            background: tx.type === 'block' ? 'rgba(59,130,246,0.2)' : (tx.type === 'short' ? 'rgba(236,72,153,0.2)' : 'rgba(139,92,246,0.2)'),
+                                            color: tx.type === 'block' ? '#60a5fa' : (tx.type === 'short' ? '#f472b6' : '#c084fc'),
+                                            fontSize: '0.7rem'
+                                          }}>{tx.type?.toUpperCase()}</span>
                                         </td>
-                                        <td className="col-date">{pos.buyDate}</td>
-                                        <td style={{ textAlign: 'right', fontWeight: 700, color: '#10b981' }}>{formatNum(pos.openQty)}</td>
-                                        <td style={{ textAlign: 'right', color: '#10b981', fontWeight: 600 }}>{formatPrice(pos.buyPrice)}</td>
-                                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatCr(pos.valueAtCost)}</td>
-                                        <td><span className="open-tag">🟢 Holding</span></td>
+                                        {isAllView && <td style={{ fontWeight: 600, color: '#f8fafc' }}>{tx.symbol}</td>}
+                                        <td><span className={`badge ${tx.buy_sell === 'BUY' ? 'buy' : 'sell'}`}>{tx.buy_sell}</span></td>
+                                        <td style={{ textAlign: 'right', fontWeight: 500 }}>{formatNum(tx.quantity)}</td>
+                                        <td style={{ textAlign: 'right' }}>{formatPrice(tx.price)}</td>
+                                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatCr(tx.value_cr)}</td>
                                       </tr>
                                     ))}
                                   </tbody>
                                 </table>
                               </div>
-                            )
-                          ) : (
-                            /* ── All Transactions View ── */
-                            <div className="leaderboard-table-wrap">
-                              <table className="leaderboard-table">
-                                <thead>
-                                  <tr>
-                                    <th>Date</th>
-                                    <th>Type</th>
-                                    <th>Symbol</th>
-                                    <th>Action</th>
-                                    <th style={{ textAlign: 'right' }}>Quantity</th>
-                                    <th style={{ textAlign: 'right' }}>Price</th>
-                                    <th style={{ textAlign: 'right' }}>Value</th>
-                                    <th>Status</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {portfolioData.transactions.map((tx, i) => {
-                                    const isOpenBuy = tx.buy_sell === 'BUY' && portfolioData.openPositions.some(p => p.symbol === tx.symbol && p.buyDate === tx.date);
-                                    return (
-                                      <tr key={i} style={{ borderLeft: isOpenBuy ? '3px solid #10b981' : (tx.buy_sell === 'SELL' ? '3px solid var(--color-sell)' : '3px solid var(--color-buy)') }} className={tx.buy_sell === 'SELL' ? 'row-sell' : 'row-buy'}>
-                                        <td className="col-date">{tx.date}</td>
-                                        <td>
-                                          <span className="badge symbol" style={{ background: tx.type === 'block' ? 'rgba(59,130,246,0.25)' : (tx.type === 'short' ? 'rgba(236,72,153,0.25)' : 'rgba(139,92,246,0.25)'), color: tx.type === 'block' ? '#60a5fa' : (tx.type === 'short' ? '#f472b6' : '#c084fc') }}>{tx.type?.toUpperCase()}</span>
-                                        </td>
-                                        <td style={{ fontWeight: 700, color: '#f8fafc' }}>{tx.symbol}</td>
-                                        <td><span className={`badge ${tx.buy_sell === 'BUY' ? 'buy' : 'sell'}`}>{tx.buy_sell}</span></td>
-                                        <td style={{ textAlign: 'right', fontWeight: 500 }}>{formatNum(tx.quantity)}</td>
-                                        <td style={{ textAlign: 'right' }}>{formatPrice(tx.price)}</td>
-                                        <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatCr(tx.value_cr)}</td>
-                                        <td>
-                                          {isOpenBuy
-                                            ? <span className="open-tag">🟢 Open</span>
-                                            : <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>—</span>
-                                          }
-                                        </td>
-                                      </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
                             </div>
-                          )}
-                        </div>
+                          );
+                        })()}
                       </>
                     )}
 
