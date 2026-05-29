@@ -50,6 +50,16 @@ export default function App() {
   const [clientsListSearch, setClientsListSearch] = useState("");
   const [clientsListLoading, setClientsListLoading] = useState(false);
 
+  // ── Script Search State ──
+  const [scriptSearch, setScriptSearch] = useState("");
+  const [scriptSuggestions, setScriptSuggestions] = useState([]);
+  const [scriptSelectedSymbol, setScriptSelectedSymbol] = useState(null);
+  const [scriptData, setScriptData] = useState(null);
+  const [scriptLoading, setScriptLoading] = useState(false);
+  const [scriptError, setScriptError] = useState(null);
+  const [scriptExpandedClient, setScriptExpandedClient] = useState(null);
+  const [scriptSortConfig, setScriptSortConfig] = useState({ key: 'valueAtCost', direction: 'desc' });
+
   // Reset page when filters change
   useEffect(() => { setPage(1); }, [activeTab, filter, search, dayWindow]);
 
@@ -338,6 +348,7 @@ export default function App() {
               { key: "top10", label: `Top 10 (${dayWindow}D)` },
               { key: "alerts", label: `Alerts (${data.summary.alertsCount})` },
               { key: "portfolio", label: `📋 Client Portfolio` },
+              { key: "scriptSearch", label: `🔎 Script Search` },
             ].map(t => (
               <button
                 key={t.key}
@@ -350,7 +361,7 @@ export default function App() {
           </div>
 
           {/* ── Content ────────────────────────────────────────────────────── */}
-          <div style={{opacity: (loading && activeTab !== 'portfolio') ? 0.5 : 1, transition: 'opacity 0.2s'}}>
+          <div style={{opacity: (loading && activeTab !== 'portfolio' && activeTab !== 'scriptSearch') ? 0.5 : 1, transition: 'opacity 0.2s'}}>
             {/* Alerts Tab */}
             {activeTab === "alerts" && (
               <div className="alerts-section fade-in">
@@ -491,7 +502,7 @@ export default function App() {
             )}
 
             {/* Main Table */}
-            {activeTab !== "leaderboard" && activeTab !== "top10" && activeTab !== "alerts" && activeTab !== "portfolio" && (
+            {activeTab !== "leaderboard" && activeTab !== "top10" && activeTab !== "alerts" && activeTab !== "portfolio" && activeTab !== "scriptSearch" && (
               <div className="data-table-container fade-in">
               {data.table.data.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
@@ -836,6 +847,254 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            {/* ── Script Search Tab ──────────────────────────────────── */}
+            {activeTab === "scriptSearch" && (() => {
+              // Autocomplete for symbol search
+              const handleScriptSearchChange = (val) => {
+                setScriptSearch(val);
+                if (val.length < 1) { setScriptSuggestions([]); return; }
+                fetch(`/api/symbol-search?q=${encodeURIComponent(val)}`)
+                  .then(r => r.json())
+                  .then(d => setScriptSuggestions(d || []))
+                  .catch(() => setScriptSuggestions([]));
+              };
+
+              const selectScript = (sym) => {
+                setScriptSelectedSymbol(sym);
+                setScriptSearch(sym);
+                setScriptSuggestions([]);
+                setScriptExpandedClient(null);
+                setScriptLoading(true);
+                setScriptError(null);
+                setScriptData(null);
+                fetch(`/api/script-portfolio?symbol=${encodeURIComponent(sym)}`)
+                  .then(r => r.json())
+                  .then(d => {
+                    if (d.error) throw new Error(d.error);
+                    setScriptData(d);
+                  })
+                  .catch(e => setScriptError(e.message))
+                  .finally(() => setScriptLoading(false));
+              };
+
+              const handleScriptSort = (key) => {
+                setScriptSortConfig(prev => ({
+                  key,
+                  direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc'
+                }));
+              };
+
+              const sortedClients = scriptData?.clients
+                ? [...scriptData.clients].sort((a, b) => {
+                    let aVal = a[scriptSortConfig.key];
+                    let bVal = b[scriptSortConfig.key];
+                    if (scriptSortConfig.key === 'client') {
+                      return scriptSortConfig.direction === 'asc' ? (aVal || '').localeCompare(bVal || '') : (bVal || '').localeCompare(aVal || '');
+                    }
+                    return scriptSortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
+                  })
+                : [];
+
+              const sortArrow = (key) => scriptSortConfig.key === key ? (scriptSortConfig.direction === 'asc' ? ' ↑' : ' ↓') : '';
+
+              return (
+                <div className="portfolio-section fade-in">
+                  {/* Search Bar */}
+                  <div style={{ padding: '1.5rem', borderBottom: '1px solid var(--border-color)' }}>
+                    <h2 className="section-title" style={{ marginBottom: '1rem' }}>
+                      <span>🔎</span> Script Search
+                      <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-secondary)', marginLeft: '0.75rem' }}>
+                        Find all clients holding open positions in a script
+                      </span>
+                    </h2>
+                    <div style={{ position: 'relative', maxWidth: '450px' }}>
+                      <input
+                        type="text"
+                        className="search-input"
+                        placeholder="Type a symbol (e.g. RELIANCE, TCS, INFY)…"
+                        value={scriptSearch}
+                        onChange={e => handleScriptSearchChange(e.target.value)}
+                        style={{ width: '100%', fontSize: '1rem', padding: '0.7rem 1rem' }}
+                      />
+                      {scriptSuggestions.length > 0 && (
+                        <div style={{
+                          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                          background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+                          borderRadius: '0 0 10px 10px', maxHeight: '280px', overflowY: 'auto',
+                          boxShadow: '0 8px 32px rgba(0,0,0,0.4)'
+                        }}>
+                          {scriptSuggestions.map(s => (
+                            <div
+                              key={s.symbol}
+                              onClick={() => selectScript(s.symbol)}
+                              style={{
+                                padding: '0.65rem 1rem', cursor: 'pointer', display: 'flex',
+                                justifyContent: 'space-between', alignItems: 'center',
+                                borderBottom: '1px solid rgba(255,255,255,0.05)',
+                                transition: 'background 0.15s',
+                              }}
+                              onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.07)'}
+                              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                            >
+                              <span style={{ fontWeight: 700, color: '#f8fafc', letterSpacing: '0.02em' }}>{s.symbol}</span>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{s.txns} deals</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Loading / Error */}
+                  {scriptLoading && (
+                    <div className="loading-container"><div className="spinner"></div><p>Analyzing {scriptSelectedSymbol}…</p></div>
+                  )}
+                  {scriptError && (
+                    <div className="alert-item" style={{ background: 'rgba(239,68,68,0.1)', borderColor: 'rgba(239,68,68,0.3)', margin: '1.5rem' }}>
+                      <p style={{ color: '#f87171' }}>⚠️ {scriptError}</p>
+                    </div>
+                  )}
+
+                  {/* Results */}
+                  {scriptData && !scriptLoading && (
+                    <div style={{ padding: '1rem 1.5rem' }}>
+                      {/* Summary Cards */}
+                      <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+                        <div style={{ padding: '0.75rem 1.25rem', background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: '10px', minWidth: '140px' }}>
+                          <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#6ee7b7', marginBottom: '0.25rem' }}>Symbol</div>
+                          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#10b981' }}>{scriptData.symbol}</div>
+                        </div>
+                        <div style={{ padding: '0.75rem 1.25rem', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.25)', borderRadius: '10px', minWidth: '140px' }}>
+                          <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#93c5fd', marginBottom: '0.25rem' }}>Clients Holding</div>
+                          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#60a5fa' }}>{scriptData.summary.totalClients}</div>
+                        </div>
+                        <div style={{ padding: '0.75rem 1.25rem', background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '10px', minWidth: '140px' }}>
+                          <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#c4b5fd', marginBottom: '0.25rem' }}>Total Open Qty</div>
+                          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#a78bfa' }}>{formatNum(scriptData.summary.totalOpenQty)}</div>
+                        </div>
+                        <div style={{ padding: '0.75rem 1.25rem', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: '10px', minWidth: '140px' }}>
+                          <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#fcd34d', marginBottom: '0.25rem' }}>Open Value</div>
+                          <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#f59e0b' }}>{formatCr(scriptData.summary.totalOpenValueCr)}</div>
+                        </div>
+                      </div>
+
+                      {/* Clients Table */}
+                      {sortedClients.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '4rem 2rem', color: 'var(--text-secondary)' }}>
+                          <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📭</div>
+                          <p style={{ fontWeight: 600, marginBottom: '0.25rem' }}>No open positions found</p>
+                          <p style={{ fontSize: '0.82rem' }}>All clients have fully exited their positions in {scriptData.symbol}.</p>
+                        </div>
+                      ) : (
+                        <div className="leaderboard-table-wrap">
+                          <table className="leaderboard-table">
+                            <thead>
+                              <tr>
+                                <th style={{ width: '30px' }}></th>
+                                <th onClick={() => handleScriptSort('client')} style={{ cursor: 'pointer' }}>Client{sortArrow('client')}</th>
+                                <th onClick={() => handleScriptSort('totalOpenQty')} style={{ textAlign: 'right', cursor: 'pointer' }}>Shares Held{sortArrow('totalOpenQty')}</th>
+                                <th onClick={() => handleScriptSort('avgBuyPrice')} style={{ textAlign: 'right', cursor: 'pointer' }}>Avg Buy Price{sortArrow('avgBuyPrice')}</th>
+                                <th onClick={() => handleScriptSort('valueAtCost')} style={{ textAlign: 'right', cursor: 'pointer' }}>Value (Cr){sortArrow('valueAtCost')}</th>
+                                <th onClick={() => handleScriptSort('totalBought')} style={{ textAlign: 'right', cursor: 'pointer' }}>Total Bought{sortArrow('totalBought')}</th>
+                                <th onClick={() => handleScriptSort('totalSold')} style={{ textAlign: 'right', cursor: 'pointer' }}>Total Sold{sortArrow('totalSold')}</th>
+                                <th style={{ textAlign: 'center' }}>Held Since</th>
+                              </tr>
+                            </thead>
+                            {sortedClients.map((c, i) => {
+                              const isExpanded = scriptExpandedClient === c.client;
+                              return (
+                                <tbody key={c.client}>
+                                  <tr
+                                    onClick={() => setScriptExpandedClient(isExpanded ? null : c.client)}
+                                    style={{
+                                      cursor: 'pointer',
+                                      borderLeft: '3px solid #10b981',
+                                      background: isExpanded ? 'rgba(255,255,255,0.04)' : '',
+                                      transition: 'background 0.15s',
+                                    }}
+                                    className="row-buy"
+                                  >
+                                    <td style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                                      {isExpanded ? '▼' : '▶'}
+                                    </td>
+                                    <td style={{ fontWeight: 700, color: '#f8fafc', maxWidth: '300px' }}>{c.client}</td>
+                                    <td style={{ textAlign: 'right', fontWeight: 700, color: '#10b981', fontSize: '0.95rem' }}>
+                                      {formatNum(c.totalOpenQty)}
+                                    </td>
+                                    <td style={{ textAlign: 'right' }}>{formatPrice(c.avgBuyPrice)}</td>
+                                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatCr(c.valueAtCost)}</td>
+                                    <td style={{ textAlign: 'right' }}>{formatNum(c.totalBought)}</td>
+                                    <td style={{ textAlign: 'right', color: c.totalSold > 0 ? 'var(--color-sell)' : 'var(--text-muted)' }}>
+                                      {c.totalSold > 0 ? formatNum(c.totalSold) : '–'}
+                                    </td>
+                                    <td style={{ textAlign: 'center', fontSize: '0.82rem', color: 'var(--text-muted)' }}>{c.heldSince || '–'}</td>
+                                  </tr>
+
+                                  {/* Expanded: Transaction History */}
+                                  {isExpanded && c.transactions && (
+                                    <tr className="expanded-row">
+                                      <td colSpan="8" style={{ padding: '0.75rem 1rem 1rem', background: 'rgba(0,0,0,0.2)' }}>
+                                        <div style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '0.5rem', paddingLeft: '0.5rem' }}>
+                                          Transaction History — {c.client} — {c.transactions.length} records
+                                        </div>
+                                        <table className="leaderboard-table" style={{ background: 'var(--bg-card)' }}>
+                                          <thead>
+                                            <tr>
+                                              <th>Date</th>
+                                              <th>Type</th>
+                                              <th>Action</th>
+                                              <th style={{ textAlign: 'right' }}>Quantity</th>
+                                              <th style={{ textAlign: 'right' }}>Price (₹)</th>
+                                              <th style={{ textAlign: 'right' }}>Value</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {c.transactions.map((tx, idx) => (
+                                              <tr
+                                                key={idx}
+                                                style={{ borderLeft: tx.buy_sell === 'SELL' ? '3px solid var(--color-sell)' : '3px solid var(--color-buy)' }}
+                                                className={tx.buy_sell === 'SELL' ? 'row-sell' : 'row-buy'}
+                                              >
+                                                <td className="col-date">{tx.date}</td>
+                                                <td>
+                                                  <span className="badge symbol" style={{
+                                                    background: tx.type === 'block' ? 'rgba(59,130,246,0.2)' : 'rgba(139,92,246,0.2)',
+                                                    color: tx.type === 'block' ? '#60a5fa' : '#c084fc',
+                                                    fontSize: '0.7rem'
+                                                  }}>{tx.type?.toUpperCase()}</span>
+                                                </td>
+                                                <td><span className={`badge ${tx.buy_sell === 'BUY' ? 'buy' : 'sell'}`}>{tx.buy_sell}</span></td>
+                                                <td style={{ textAlign: 'right', fontWeight: 500 }}>{formatNum(tx.quantity)}</td>
+                                                <td style={{ textAlign: 'right' }}>{formatPrice(tx.price)}</td>
+                                                <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatCr(tx.value_cr)}</td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </tbody>
+                              );
+                            })}
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Empty state */}
+                  {!scriptData && !scriptLoading && !scriptError && (
+                    <div style={{ textAlign: 'center', padding: '5rem 2rem', color: 'var(--text-secondary)' }}>
+                      <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>🔎</div>
+                      <p style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--text-primary)', marginBottom: '0.25rem' }}>Search for a script</p>
+                      <p style={{ fontSize: '0.85rem' }}>Type a symbol above to find all clients with open positions.</p>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </>
       )}

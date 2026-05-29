@@ -84,15 +84,15 @@ def insert_deals(records):
     rows = []
     for d in records:
         rows.append((
-            d.get("id", "")[:64],
-            d["mysql_date"],
-            d["symbol"][:50],
-            d["client"][:399],
-            d["buy_sell"],
-            int(d["quantity"]),
-            float(d["price"]),
-            float(d["value_cr"]),
-            d["type"],
+            (d.get("id") or "")[:64],
+            d.get("mysql_date"),
+            (d.get("symbol") or "")[:50],
+            (d.get("client") or "")[:399],
+            d.get("buy_sell") or "BUY",
+            int(d.get("quantity") or 0),
+            float(d.get("price") or 0.0),
+            float(d.get("value_cr") or 0.0),
+            d.get("type") or "bulk",
         ))
 
     cur.executemany(sql, rows)
@@ -120,13 +120,15 @@ MODE_MAP = {
 
 def parse_nse_date(raw):
     """Parse DD-Mon-YYYY or DD-MM-YYYY → (display DD-MM-YYYY, mysql YYYY-MM-DD)."""
+    if not raw:
+        return "", None
     for fmt in ("%d-%b-%Y", "%d-%m-%Y", "%Y-%m-%d"):
         try:
-            dt = datetime.strptime(raw, fmt)
+            dt = datetime.strptime(str(raw), fmt)
             return dt.strftime(NSE_DATE_FMT), dt.strftime(MYSQL_DATE_FMT)
         except Exception:
             pass
-    return raw, None
+    return str(raw), None
 
 
 def safe_int(v):
@@ -139,24 +141,29 @@ def safe_float(v):
 
 
 def normalise(row, deal_type):
+    if not isinstance(row, dict):
+        row = {}
+
     if deal_type == "short":
-        raw_date = row.get("SS_DATE", row.get("DATE", row.get("date", "")))
-        qty      = safe_int(row.get("QTY_SOLD", row.get("BD_QTY_TRD", 0)))
-        price    = safe_float(row.get("AVG_PRICE", row.get("BD_TP_WATP", 0)))
-        sym      = row.get("SCRIP_NAME", row.get("SYMBOL", ""))
-        client   = row.get("CLIENT_NAME", row.get("clientName", ""))
+        raw_date = row.get("SS_DATE") or row.get("DATE") or row.get("date") or ""
+        qty      = safe_int(row.get("QTY_SOLD") or row.get("BD_QTY_TRD") or row.get("qty") or 0)
+        price    = safe_float(row.get("AVG_PRICE") or row.get("BD_TP_WATP") or row.get("watp") or 0)
+        sym      = row.get("SCRIP_NAME") or row.get("SYMBOL") or row.get("symbol") or ""
+        client   = row.get("CLIENT_NAME") or row.get("clientName") or ""
         bs       = "SELL"
     else:
-        raw_date = row.get("BD_DT_DATE", row.get("date", ""))
-        qty      = safe_int(row.get("BD_QTY_TRD", row.get("qty", 0)))
-        price    = safe_float(row.get("BD_TP_WATP", row.get("watp", 0)))
-        sym      = row.get("BD_SYMBOL", row.get("symbol", ""))
-        client   = row.get("BD_CLIENT_NAME", row.get("clientName", ""))
-        bs       = (row.get("BD_BUY_SELL") or row.get("buySell") or "").strip().upper()
+        raw_date = row.get("BD_DT_DATE") or row.get("date") or ""
+        qty      = safe_int(row.get("BD_QTY_TRD") or row.get("qty") or 0)
+        price    = safe_float(row.get("BD_TP_WATP") or row.get("watp") or 0)
+        sym      = row.get("BD_SYMBOL") or row.get("symbol") or ""
+        client   = row.get("BD_CLIENT_NAME") or row.get("clientName") or ""
+        bs       = str(row.get("BD_BUY_SELL") or row.get("buySell") or "").strip().upper()
+        if bs not in ("BUY", "SELL"):
+            bs = "BUY"
 
     display_date, mysql_date = parse_nse_date(raw_date)
     return {
-        "id":         row.get("_id", ""),
+        "id":         row.get("_id") or "",
         "date":       display_date,
         "mysql_date": mysql_date,
         "symbol":     sym,
@@ -251,6 +258,17 @@ def main():
 
     # Filter out records with invalid dates
     valid = [d for d in new_data if d.get("mysql_date")]
+
+    # Filter out short-selling aggregate rows that have no price and no client
+    # (NSE snapshot returns aggregate short positions with only symbol + qty)
+    before = len(valid)
+    valid = [d for d in valid if not (
+        d["type"] == "short" and not d.get("client") and d.get("price", 0) == 0
+    )]
+    skipped = before - len(valid)
+    if skipped:
+        print(f"[FILTER] Skipped {skipped} aggregate short-sell rows (no price/client).")
+
     print(f"\n[INSERT] Inserting {len(valid)} records into MySQL...")
     inserted = insert_deals(valid)
     print(f"[DONE]  {inserted} new rows inserted (duplicates ignored).")

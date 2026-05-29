@@ -17,11 +17,13 @@ def safe_float(v):
     except: return 0.0
 
 def normalise_date(raw_date):
+    if not raw_date:
+        return ""
     try:
-        dt = datetime.strptime(raw_date.strip().title(), "%d-%b-%Y")
+        dt = datetime.strptime(str(raw_date).strip().title(), "%d-%b-%Y")
         return dt.strftime(NSE_DATE_FMT)
     except Exception:
-        return raw_date.strip()
+        return str(raw_date).strip()
 
 def parse_csv(filepath, deal_type):
     deals = []
@@ -43,10 +45,10 @@ def parse_csv(filepath, deal_type):
             
             deals.append({
                 "id": "",  # no ID in CSV
-                "date": normalise_date(row.get("Date", "")),
-                "symbol": row.get("Symbol", "").strip(),
-                "client": row.get("Client Name", "").strip(),
-                "buy_sell": row.get("Buy / Sell", "").strip().upper(),
+                "date": normalise_date(row.get("Date")),
+                "symbol": (row.get("Symbol") or "").strip(),
+                "client": (row.get("Client Name") or "").strip(),
+                "buy_sell": (row.get("Buy / Sell") or "").strip().upper(),
                 "quantity": qty,
                 "price": price,
                 "value_cr": round((qty * price) / 10_000_000, 2),
